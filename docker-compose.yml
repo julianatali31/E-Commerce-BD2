@@ -1,0 +1,63 @@
+# Arquitetura shared-nothing: cada shard é um PostgreSQL independente, com
+# seu próprio processo, disco (volume) e memória. Eles NÃO se conhecem; só a
+# API (coordenador) sabe que existem dois.
+
+x-shard: &shard
+  image: postgres:16-alpine
+  environment:
+    POSTGRES_USER: loja
+    POSTGRES_PASSWORD: loja
+    POSTGRES_DB: loja
+  healthcheck:
+    # -h 127.0.0.1 de propósito: durante a inicialização (schema.sql) o Postgres
+    # só escuta no socket local. Pelo TCP, ele só fica "pronto" depois do init.
+    test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "loja", "-d", "loja"]
+    interval: 2s
+    timeout: 3s
+    retries: 30
+
+services:
+  shard_a:
+    <<: *shard
+    container_name: shard_a
+    ports: ["5433:5432"]  # publicado no host só para inspeção com psql
+    volumes:
+      - dados_a:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+
+  shard_b:
+    <<: *shard
+    container_name: shard_b
+    ports: ["5434:5432"]
+    volumes:
+      - dados_b:/var/lib/postgresql/data
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+
+  # Executa uma vez e termina. Idempotente: se já houver dados, não faz nada.
+  seed:
+    build: ./api
+    command: ["python", "-m", "scripts.seed"]
+    environment: &dsns
+      SHARD_A_DSN: postgresql://loja:loja@shard_a:5432/loja
+      SHARD_B_DSN: postgresql://loja:loja@shard_b:5432/loja
+    volumes:
+      - ./api:/code  # mesmo código da API (inclui roteamento.py)
+    depends_on:
+      shard_a: { condition: service_healthy }
+      shard_b: { condition: service_healthy }
+
+  api:
+    build: ./api
+    container_name: api
+    ports: ["8000:8000"]
+    environment: *dsns
+    volumes:
+      - ./api:/code
+    # "depends_on" só vale para a SUBIDA. Depois, se um shard cair, a API
+    # continua rodando e reporta o problema em /health; ela não morre junto.
+    depends_on:
+      seed: { condition: service_completed_successfully }
+
+volumes:
+  dados_a:
+  dados_b:
