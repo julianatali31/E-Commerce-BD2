@@ -176,6 +176,14 @@ def main() -> None:
         copiar(conn, "clientes", "id, nome, email, cidade, criado_em", destino[shard]["clientes"])
         copiar(conn, "pedidos", "id, cliente_id, produto_id, quantidade, valor_total, criado_em",
                destino[shard]["pedidos"])
+        # Geradores de ID (ver app/ids.py): passo = nº de shards; cada shard
+        # começa num resto diferente, logo após o maior id já usado.
+        # Com 2 shards e 2.000 clientes: shard_a -> 2001, 2003...; shard_b -> 2002, 2004...
+        posicao = SHARDS.index(shard)
+        for sequencia, usados in (("seq_clientes", len(clientes)), ("seq_pedidos", len(pedidos))):
+            base = -(-usados // len(SHARDS)) * len(SHARDS)  # arredonda para cima (múltiplo de N)
+            conn.execute(f"ALTER SEQUENCE {sequencia} INCREMENT BY {len(SHARDS)} "
+                         f"RESTART WITH {base + posicao + 1}")
         conn.execute("ANALYZE")  # estatísticas frescas para o planejador (EXPLAIN da Fase 3)
         conn.commit()
         conn.close()

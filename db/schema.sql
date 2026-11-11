@@ -67,3 +67,12 @@ CREATE TABLE pedidos (
 
 CREATE INDEX idx_pedidos_cliente ON pedidos (cliente_id);
 CREATE INDEX idx_pedidos_produto ON pedidos (produto_id);
+
+-- ---------------------------------------------------------------------
+-- Geradores de ID (Fase 2): uma sequência por shard, com passo 2.
+-- O ponto de partida é diferente em cada shard (ímpares no shard_a, pares no
+-- shard_b) e é ajustado pelo seed, que sabe quantos ids já foram usados.
+-- Detalhes e o porquê em api/app/ids.py.
+-- ---------------------------------------------------------------------
+CREATE SEQUENCE seq_clientes INCREMENT BY 2;
+CREATE SEQUENCE seq_pedidos  INCREMENT BY 2;

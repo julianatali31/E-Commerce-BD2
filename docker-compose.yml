@@ -1,6 +1,9 @@
 # Arquitetura shared-nothing: cada shard é um PostgreSQL independente, com
 # seu próprio processo, disco (volume) e memória. Eles NÃO se conhecem; só a
 # API (coordenador) sabe que existem dois.
+#
+# Fase 2: o shard_a ganha uma réplica de leitura (shard_a_replica) via
+# streaming replication do próprio PostgreSQL.
 
 x-shard: &shard
   image: postgres:16-alpine
@@ -21,9 +24,13 @@ services:
     <<: *shard
     container_name: shard_a
     ports: ["5433:5432"]  # publicado no host só para inspeção com psql
+    # wal_keep_size: guarda até 512 MB de WAL para a réplica alcançar o
+    # primário caso fique um tempo parada (sem isso ela poderia precisar ser recriada).
+    command: ["postgres", "-c", "wal_keep_size=512MB"]
     volumes:
       - dados_a:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./db/primario-replicacao.sh:/docker-entrypoint-initdb.d/02_replicacao.sh:ro
 
   shard_b:
     <<: *shard
@@ -33,6 +40,29 @@ services:
       - dados_b:/var/lib/postgresql/data
       - ./db/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
 
+  # Réplica de leitura do shard_a: recebe o WAL do primário continuamente e
+  # aplica cada commit com ATRASO_REPLICA de atraso (ver db/replica-entrypoint.sh).
+  # Só aceita leitura (hot standby). Não entra no roteamento de escrita.
+  shard_a_replica:
+    image: postgres:16-alpine
+    container_name: shard_a_replica
+    user: postgres
+    entrypoint: ["/bin/sh", "/replica-entrypoint.sh"]
+    environment:
+      PGPASSWORD: replicador   # usada pelo pg_basebackup
+      ATRASO_REPLICA: 10s
+    ports: ["5435:5432"]
+    volumes:
+      - dados_a_replica:/var/lib/postgresql/data
+      - ./db/replica-entrypoint.sh:/replica-entrypoint.sh:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "loja", "-d", "loja"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      shard_a: { condition: service_healthy }
+
   # Executa uma vez e termina. Idempotente: se já houver dados, não faz nada.
   seed:
     build: ./api
@@ -40,6 +70,7 @@ services:
     environment: &dsns
       SHARD_A_DSN: postgresql://loja:loja@shard_a:5432/loja
       SHARD_B_DSN: postgresql://loja:loja@shard_b:5432/loja
+      SHARD_A_REPLICA_DSN: postgresql://loja:loja@shard_a_replica:5432/loja
     volumes:
       - ./api:/code  # mesmo código da API (inclui roteamento.py)
     depends_on:
@@ -57,7 +88,10 @@ services:
     # continua rodando e reporta o problema em /health; ela não morre junto.
     depends_on:
       seed: { condition: service_completed_successfully }
+      # "started" e não "healthy": a loja funciona sem a réplica; só a demo dela não.
+      shard_a_replica: { condition: service_started }
 
 volumes:
   dados_a:
   dados_b:
+  dados_a_replica:

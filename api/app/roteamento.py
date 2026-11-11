@@ -42,3 +42,18 @@ def shard_do_cliente(cliente_id: int) -> str:
 def shard_do_produto(produto_id: int) -> str:
     """Shard onde está o estoque de um produto."""
     return shard_por_hash(produto_id)
+
+
+# --------------------------------------------------------------------------
+# EXPERIMENTAL (Fase 2): e se fragmentássemos pedidos pela CATEGORIA do produto?
+# Usada só na simulação de /debug/simular-chave; nenhum dado é gravado assim.
+#
+# Problemas que a simulação expõe:
+#  - Só 7 categorias: a chave tem cardinalidade baixa, então nunca daria para
+#    usar mais de 7 shards, e o hash de 7 valores dificilmente fica 50/50.
+#  - Categorias têm popularidades muito diferentes (mouse vende 10x mais que
+#    PC): o shard que recebe as campeãs vira "hot shard".
+#  - Quebra a co-localização: o pedido deixa de morar junto do cliente.
+# --------------------------------------------------------------------------
+def shard_por_categoria(categoria: str) -> str:
+    return shard_por_hash(categoria)
