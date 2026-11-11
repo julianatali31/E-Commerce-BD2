@@ -1,0 +1,8 @@
+# Scripts e SQL rodam DENTRO de containers Linux: precisam de fim de linha LF.
+# Sem isso, o Git no Windows (core.autocrlf) os converteria para CRLF e o
+# container falharia com erros como "/bin/sh^M: not found".
+*.sh   text eol=lf
+*.sql  text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+Dockerfile text eol=lf
